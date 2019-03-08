@@ -1,0 +1,255 @@
+﻿
+# 标题：【量化课堂】多头趋势回踩策略    
+# 作者：JoinQuant量化课堂  多头趋势回踩利用的是【5，10，20，60，120】天均值的降序， 已进行趋势探测和股票筛选
+
+import numpy as np
+import pandas as pd
+
+'''
+================================================================================
+总体回测前
+================================================================================
+'''
+def initialize(context):
+    # 设置参数
+    set_params()
+    # 设置全局变量
+    set_variables()
+    # 设置回测
+    set_backtest()
+
+
+# 1
+# 设置参数
+def set_params():
+    # 设置股票池
+    g.security = get_index_stocks('000300.XSHG')
+    # 测试多头趋势的均线长度
+    g.ma_lengths = [5,10,20,60,120]
+    # 测试买入回踩的均线长度
+    g.test_ma_length = 10
+    # 买入时回踩但必须站住的均线
+    g.stand_ma_length = 10
+    # 同时最多持有几支股票
+    g.num_stocks = 15
+    # 多头趋势天数
+    g.in_trend_days = 7
+    # 止盈百分比
+    g.cut_gain_percentage = 0.05
+    # 止损百分比
+    g.cut_loss_percentage = 0.05
+
+# 2
+# 设置全局变量
+def set_variables():
+    # 可行股票池
+    g.available_stocks = []
+
+# 3
+# 设置回测
+def set_backtest():
+    # 一律使用真实价格
+    set_option('use_real_price', True)
+    # 过滤log
+    log.set_level('order', 'error')
+    # 设置基准
+    set_benchmark('000300.XSHG')
+
+'''
+================================================================================
+每日回测前
+================================================================================
+'''
+def before_trading_start(context):
+    # 设置滑点、手续费和指数成分股
+    set_slip_fee(context)
+    # 选取有效股票
+    g.available_stocks = get_available_stocks(context)
+
+
+# 4
+# 根据不同的时间段设置滑点与手续费并且更新指数成分股
+def set_slip_fee(context):
+    # 更新指数成分股
+    g.security = get_index_stocks('000300.XSHG')
+    # 将滑点设置为0
+    set_slippage(FixedSlippage(0)) 
+    # 根据不同的时间段设置手续费
+    dt=context.current_dt
+    
+    if dt>datetime.datetime(2013,1, 1):
+        set_commission(PerTrade(buy_cost=0.0003, sell_cost=0.0013, min_cost=5)) 
+        
+    elif dt>datetime.datetime(2011,1, 1):
+        set_commission(PerTrade(buy_cost=0.001, sell_cost=0.002, min_cost=5))
+            
+    elif dt>datetime.datetime(2009,1, 1):
+        set_commission(PerTrade(buy_cost=0.002, sell_cost=0.003, min_cost=5))
+                
+    else:
+        set_commission(PerTrade(buy_cost=0.003, sell_cost=0.004, min_cost=5))
+
+
+# 5
+# 选取有效股票
+# 输出一list，包含所有数据达到最长均线天数，并且今日不停牌的股票
+def get_available_stocks(context):
+    # 获取最长均线长度
+    longest_ma = max(g.ma_lengths)
+    # 开空list 
+    available_stocks = []
+    # 获取现在数据
+    current_data = get_current_data(security_list=None)
+    # 对于股票池里的所有股票
+    for security in g.security:
+        # 检查是否停牌
+        is_paused = current_data[security].paused
+        # 获取过去数据
+        past_prices = attribute_history(security,longest_ma + g.in_trend_days, '1d', 'close',  skip_paused=True)
+        # 第一个数据是否无效
+        is_nan = isnan(past_prices.iloc[0,0])
+        # 如果没停牌并且数据够长
+        if not is_paused and not is_nan:
+            # 股票加入list
+            available_stocks.append(security)
+    # 返回list
+    return(available_stocks)
+    
+
+'''
+================================================================================
+每天交易时
+================================================================================
+'''
+# 每个回测单位
+def handle_data(context, data):
+    # 产生卖出信号
+    to_sell = sell_signal(context)
+    # 卖出股票
+    sell_stocks(to_sell)
+    # 产生买入信号
+    to_buy = buy_signal(g.available_stocks, context)
+    # 买入该买的股票
+    buy_stocks(to_buy,context)
+    
+# 6
+# 获取卖出信号
+# 返回一list，是所有达到止盈或者止损线的股票
+def sell_signal(context):
+    # 建立需要卖出的股票list 
+    to_sell = []
+    # 对于仓内所有股票
+    for security in context.portfolio.positions:
+        # 取现价
+        current_price = history(1, '1m', 'close', security).iloc[0].iloc[0]
+        # 获取买入平均价格
+        avg_cost = context.portfolio.positions[security].avg_cost
+        # 计算止盈线
+        high = avg_cost * (1+ g.cut_gain_percentage)
+        # 计算止损线
+        low = avg_cost*(1-g.cut_loss_percentage)
+        # 如果价格突破了止损或止盈线
+        if current_price <= low or current_price >= high:
+            # 全部卖出
+            to_sell.append(security)
+    return(to_sell)
+
+# 7
+# 卖出函数
+# 输入一list股票
+# 执行卖出
+def sell_stocks(to_sell):
+    for security in to_sell:
+        order_target(security, 0)
+
+# 8
+# 计算买入信号
+# 输入所有多头趋势股票
+# 返回一list，包含所有在趋势内但是踩到测量均线的股票
+def buy_signal(available_stocks, context):
+    in_trend_stocks = get_in_trends(available_stocks, context)
+    print(in_trend_stocks)
+    # 建立空list 
+    signal = []
+    # 对于所有多头趋势股票
+    for security in in_trend_stocks:
+        # 获取历史收盘价
+        past_prices = attribute_history(security,g.test_ma_length, '1d', 'close', skip_paused = True)
+        # 计算均线
+        test_ma = sum(past_prices).iloc[0] / g.test_ma_length
+        # 获取站住均线数据
+        past_prices_2 = attribute_history(security, g.stand_ma_length, '1d', 'close', skip_paused= True) 
+        # 计算均线
+        stand_ma = sum(past_prices_2).iloc[0] / g.stand_ma_length
+        # 获取昨日信息
+        previous_history = attribute_history(security, 1, '1d', ['close','low'])
+        # 昨日收盘价
+        current_price = previous_history['close'].iloc[0]
+        # 昨日最低价
+        previous_low = previous_history['low'].iloc[0]
+        # 如果该股票没有持仓，并且前收盘价低于目标均线
+        if current_price <= test_ma and security not in context.portfolio.positions:
+            # 加入信号list 
+            signal.append(security)
+    # 输出信号
+    return(signal[0:g.num_stocks])
+
+# 9
+# 获取所有多头趋势股票
+# 输入一list有效股票
+# 输出一list，为所有符合从小到长均线排列从大到小的股票
+def get_in_trends(available_stocks, context):
+    # 建立需要移除的股票list，只要发现股票有两根均线不符合多头趋势，就加入删除名单并停止计算
+    to_remove = []
+    # 对于所有有效股票
+    for security in available_stocks:
+        # 获取最长ma长度
+        longest_ma = max(g.ma_lengths)
+        # 今日日期
+        date = context.current_dt
+        # 获取过去价格
+        all_past_prices = attribute_history(security,longest_ma + g.in_trend_days -1, '1d', 'close',  skip_paused = True)
+        # 对于认定趋势的每一天
+        for day in range(g.in_trend_days):
+            # 筛去尾部的-day天数据
+            if day == 0:
+                past_prices = all_past_prices
+            else:
+                past_prices = all_past_prices[:-day]
+            # 建立空均线值list 
+            mas = []
+            # 对于所有均线长度
+            for length in g.ma_lengths:
+                # 截取相应数据
+                ma_data = past_prices[-length:]
+                # 算均值
+                ma = sum(ma_data).iloc[0]/ length
+                # 计入list 
+                mas.append(ma)
+            # 从大到小排列均值list 
+            sorted_mas = sorted(mas)        ##sorted升序排列 .reverse()倒转顺序
+            sorted_mas.reverse()
+            # 如果排列之后和之前不等
+            if mas != sorted_mas:
+                # 加入删除行列
+                to_remove.append(security)
+                # 不继续进行运算
+                break
+    # 要删的股票
+    for security in to_remove:
+        # 就删了
+        available_stocks.remove(security)
+    # 返回趋势股票list 
+    return(available_stocks)
+
+# 10
+# 买入股票函数
+# 输入一list股票
+# 执行买入股票
+def buy_stocks(signal, context):
+    # 计算每只股票分到多少钱
+    cash_per_stock = context.portfolio.portfolio_value / g.num_stocks
+    # 对于信号中的每一个股票
+    for security in signal:
+        # 买入
+        order_value(security, cash_per_stock)

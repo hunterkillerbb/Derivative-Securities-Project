@@ -1,0 +1,236 @@
+# 克隆自聚宽文章：https://www.joinquant.com/post/3793
+# 标题：【量化课堂】股指期货对冲策略
+# 作者：JoinQuant量化课堂
+
+import statsmodels.api as sm
+from statsmodels import regression
+import numpy as np
+import pandas as pd
+import time 
+from datetime import date
+from jqdata import *
+import datetime
+from dateutil.relativedelta import relativedelta
+'''
+================================================================================
+总体回测前
+================================================================================
+'''
+
+#总体回测前要做的事情
+def initialize(context):
+    set_params()        #1设置策参数
+    set_variables()     #2设置中间变量
+    set_backtest()      #3设置回测条件
+    set_subportfolios([SubPortfolioConfig(cash=context.portfolio.starting_cash*(1/1.3) ,type='stock'),SubPortfolioConfig(cash=context.portfolio.starting_cash*0.3/1.3,type='index_futures')])
+    #初始资金1/1.3去了股票，0.3/1.3去了期货
+
+#1
+#设置策参数
+def set_params():
+    g.tc=20      #调仓频率
+    g.yb=63      # 样本长度  --选股长度
+    g.percentile=0.03 #设置选股的百分比
+    g.pre_future=''#用来装上次进入的期货合约名字
+
+#2
+#设置中间变量
+def set_variables():
+    g.t = 0 #运行天数
+    g.in_position_stocks = [] #持仓股票
+    
+#3
+#设置回测条件
+def set_backtest():
+    set_option('use_real_price', True) #用真实价格交易
+    log.set_level('order', 'error')
+    set_slippage(FixedSlippage(0))     #将滑点设置为0
+
+'''
+================================================================================
+每天开盘前
+================================================================================
+'''
+#每天开盘前要做的事情
+def before_trading_start(context):
+    set_slip_fee(context)
+    g.all_stocks = set_feasible_stocks(get_all_securities(['stock']).index,g.yb,context)
+
+#4 根据不同的时间段设置滑点与手续费
+def set_slip_fee(context):
+    # 将滑点设置为0
+    set_slippage(FixedSlippage(0)) 
+    # 根据不同的时间段设置手续费
+    dt=context.current_dt
+    log.info(type(context.current_dt))
+    
+    if dt>datetime.datetime(2013,1, 1):
+        set_commission(PerTrade(buy_cost=0.0003, sell_cost=0.0013, min_cost=5)) 
+        
+    elif dt>datetime.datetime(2011,1, 1):
+        set_commission(PerTrade(buy_cost=0.001, sell_cost=0.002, min_cost=5))
+            
+    elif dt>datetime.datetime(2009,1, 1):
+        set_commission(PerTrade(buy_cost=0.002, sell_cost=0.003, min_cost=5))
+                
+    else:
+        set_commission(PerTrade(buy_cost=0.003, sell_cost=0.004, min_cost=5))
+    
+    # 设置期货合约保证金
+    if dt>datetime.datetime(2015,9,7):
+        g.futures_margin_rate = 0.2 
+    else:
+        g.futures_margin_rate = 0.1 
+    set_option('futures_margin_rate', g.futures_margin_rate)
+
+#5
+# 设置可行股票池：
+# 过滤掉当日停牌的股票,且筛选出前days天未停牌股票，这里我们设置为一个季度
+# 输入：stock_list-list类型,样本天数days-int类型，context（见API）
+# 输出：颗星股票池-list类型
+def set_feasible_stocks(stock_list,days,context):
+    # 得到是否停牌信息的dataframe，停牌的1，未停牌得0
+    suspened_info_df = get_price(list(stock_list), start_date=context.current_dt, end_date=context.current_dt, frequency='daily', fields='paused')['paused'].T
+    # 过滤停牌股票 返回dataframe
+    unsuspened_index = suspened_info_df.iloc[:,0]<1
+    # 得到当日未停牌股票的代码list:
+    unsuspened_stocks = suspened_info_df[unsuspened_index].index
+    # 进一步，筛选出前days天未曾停牌的股票list:
+    feasible_stocks=[]
+    current_data=get_current_data()
+    for stock in unsuspened_stocks:
+        if sum(attribute_history(stock, days, unit='1d',fields=('paused'),skip_paused=False))[0]==0:
+            feasible_stocks.append(stock)
+    return feasible_stocks
+
+
+
+'''
+================================================================================
+每天交易时
+================================================================================
+'''
+#每个交易日需要运行的函数
+def handle_data(context, data):
+    # 计算持仓股票
+    g.in_position_stocks = compute_signals(context)
+    # 计算对冲比例和 beta
+    hedge_ratio, beta = compute_hedge_ratio(context, g.in_position_stocks)
+    # 调仓
+    rebalance(hedge_ratio, beta, context)
+    # 天数加一
+    g.t += 1
+
+# 6
+# 计算持仓股票
+# 输出一 list 股票
+def compute_signals(context):
+    # 如果是调仓日
+    if g.t%g.tc==0:
+        # 获取所有股票的财务数据总负债和总资产
+        q = query(balance.code, balance.total_liability, balance.total_assets).filter(balance.code.in_(g.all_stocks))
+        data = get_fundamentals(q)
+        # 计算资产负债比
+        data['ALR'] = data['total_liability']/data['total_assets']
+        # 资产负债比从大到小排列
+        data = data.sort('ALR', ascending=False)
+        # 输出最靠前的 3%
+        return list(data.code)[:int(float(len(g.all_stocks))*g.percentile)]
+    # 如果不是调仓日
+    else:
+        # 延续旧的持仓股票
+        return g.in_position_stocks
+
+# 7 
+# 计算对冲比例
+# 输出两个 float
+def compute_hedge_ratio(context, in_position_stocks):
+    # 取股票在样本时间内的价格
+    prices = history(g.yb, '1d', 'close', in_position_stocks)
+    # 取指数在样本时间内的价格
+    index_prices = list(attribute_history('000300.XSHG', g.yb, '1d', 'close').close)
+    # 计算股票在样本时间内的日收益率
+    rets = [(prices.iloc[i+1,:]-prices.iloc[i,:])/prices.iloc[i,:] for i in range(g.yb-1)]
+    # 计算日收益率平均
+    mean_rets = [np.mean(x) for x in rets]
+    # 计算指数的日收益率
+    index_rets = [(y-x)/x for (x,y) in zip(index_prices[:-1],index_prices[1:])]
+    # 计算组合和指数的协方差矩阵
+    cov_mat = np.cov(mean_rets, index_rets)
+    # 计算组合的系统性风险
+    beta = cov_mat[0,1]/cov_mat[1,1]
+    # 计算并返回对冲比例
+    return 1+beta*g.futures_margin_rate+beta/5, beta
+    
+# 8
+# 调仓函数
+# 输入对冲比例
+def rebalance(hedge_ratio, beta, context):
+    # 计算资产总价值
+    total_value = context.portfolio.total_value
+    # 计算预期的股票账户价值
+    expected_stock_value = total_value/hedge_ratio
+    
+    # 将两个账户的钱调到预期的水平
+    transfer_cash(1, 0, min(context.subportfolios[1].transferable_cash, max(0, expected_stock_value-context.subportfolios[0].total_value)))
+    transfer_cash(0, 1, min(context.subportfolios[0].transferable_cash, max(0, context.subportfolios[0].total_value-expected_stock_value)))
+
+    # 计算股票账户价值（预期价值和实际价值其中更小的那个）
+    stock_value = min(context.subportfolios[0].total_value, expected_stock_value)
+    # 计算相应的期货保证金价值
+    futures_margin = stock_value * beta * g.futures_margin_rate
+    
+    # 调整股票仓位，在 g.in_position_stocks 里的等权分配
+    for stock in context.subportfolios[0].long_positions.keys():
+        if stock not in g.in_position_stocks:
+            order_target(stock,0,pindex=0)  
+    for stock in g.in_position_stocks:
+        order_target_value(stock, stock_value/len(g.in_position_stocks), pindex=0)
+    for stock in g.in_position_stocks:
+        order_target_value(stock, stock_value/len(g.in_position_stocks), pindex=0)
+    
+    # 获取下月连续合约 string
+    current_future = get_next_month_future(context,'IF')
+    # 如果下月合约和原本持仓的期货不一样
+    if g.pre_future!='' and g.pre_future!=current_future:
+        # 就把仓位里的期货平仓
+        order_target(g.pre_future, 0, side='short', pindex=1)
+    # 现有期货合约改为刚计算出来的
+    g.pre_future = current_future
+    # 获取沪深300价格
+    index_price = attribute_history('000300.XSHG',1, '1d', 'close').close.iloc[0]
+    # 计算并调整需要的空单仓位
+    order_target(current_future, int(futures_margin/(index_price*300*g.futures_margin_rate)), side='short', pindex=1)
+
+# 9
+# 取下月连续string
+# 输入 context 和一个 string，后者是'IF'或'IC'或'IH'
+# 输出一 string，如 'IF1509.CCFX'
+def get_next_month_future(context, symbol):
+    dt = context.current_dt
+    month_begin_day = datetime.date(dt.year, dt.month, 1).isoweekday()
+    third_friday_date = 20-month_begin_day + 7*(month_begin_day>5)
+    # 如果没过第三个星期五或者第三个星期五（包括）至昨日的所有天都停盘
+    if dt.day<=third_friday_date or (dt.day>third_friday_date and not any([datetime.date(dt.year, dt.month, third_friday_date+i) in get_all_trade_days() for i in range(dt.day-third_friday_date)])):
+        year = str(dt.year+(dt.month)//12)[2:]
+        month = str(dt.month%12+1)
+    else:
+        next_dt = dt + relativedelta(months=2)
+        year = str(dt.year+(dt.month)//12)[2:]
+        month = str((dt.month)%12+1)
+    if len(month)==1:
+        month = '0'+month
+    return(symbol+year+month+'.CCFX')
+    
+
+    
+
+
+'''
+================================================================================
+每天收盘后
+================================================================================
+'''
+# 每日收盘后要做的事情（本策略中不需要）
+def after_trading_end(context):
+    return

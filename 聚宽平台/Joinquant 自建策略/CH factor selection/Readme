@@ -1,0 +1,15 @@
+﻿
+
+
+   firm size factor因子规划要求 --- 去除百分之30最小公司规模的数据 （； 只上市6个月的？； 
+   在去年只有少于120条交易记录的或者上个月只有少于15条交易记录的公司。）（后两条只是为了防止被停牌公司收益的影响）
+
+   剩下的70%的市场通过中位数被分成了S and B， 同时通过分成3组EP组： V （30% value） M (40% medium) G(30% growth) 
+   上中下三组 subfactor: S/V, S/M, S/G, B/V, B/M, and B/G.
+   
+   size factor： SMB = 1/3 * (S/V + S/M + S/G)  - 1/3 * (B/V + B/M + B/G) small-minus-big
+   value factor ： VMG = 1/2 * （ S/V + B/V ） - 1/2 * （ S/G + B/G ） value-minus-growth
+   market factor : MKT = the return on the value-weighted portfolio of our universe, the top 70% of stocks, in excess of the   
+                         one-year deposit interest rate.
+   Turnover : sentiment-motivated turnover factor ( pessimistic minus optimistic ) PMO 
+                    turnover last month - turnover last year

@@ -1,0 +1,27 @@
+def filter_security(securities,
+                    filter_paused=False,
+                    filter_st=False,
+                    filter_limit_up=False,
+                    filter_limit_down=False):
+    """
+    在策略中按需过滤股票。
+    注意：该函数仅返回被过滤的股票集合，而不会修改传入的股票集合。
+    :param securities: 股票集合
+    :param filter_paused: 过滤停牌
+    :param filter_st: 过滤 ST
+    :param filter_limit_up: 过滤涨停价
+    :param filter_limit_down: 过滤跌停价
+    :return: ist
+    """
+    r, current_data = [], get_current_data()
+    for security in securities:
+        o = current_data[security]
+        is_filter = True if filter_paused and o.paused else \
+                    True if filter_st and o.is_st else \
+                    True if filter_limit_up and o.last_price == o.high_limit else \
+                    True if filter_limit_down and o.last_price == o.low_limit else \
+                    False
+        if is_filter:
+            r.append(security)
+            
+    return r
