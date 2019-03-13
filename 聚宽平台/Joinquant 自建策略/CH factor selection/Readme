@@ -11,5 +11,7 @@
    value factor ： VMG = 1/2 * （ S/V + B/V ） - 1/2 * （ S/G + B/G ） value-minus-growth
    market factor : MKT = the return on the value-weighted portfolio of our universe, the top 70% of stocks, in excess of the   
                          one-year deposit interest rate.
-   Turnover : sentiment-motivated turnover factor ( pessimistic minus optimistic ) PMO 
-                    turnover last month - turnover last year
+   sentiment factor: PMO = sentiment-motivated turnover factor --- pessimistic minus optimistic 
+                     buy in the low turnover stocks  - sell out high turnover stocks (compute turnover last month - turnover last year )
+
+                     
