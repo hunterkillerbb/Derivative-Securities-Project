@@ -253,10 +253,8 @@ def CH4(stocks,begin,end,rf):
     
     VMG = sum(df_4[V].T)/len(V)- sum(df_4[G].T)/len(G)
 
-    SMB1 = sum(df_4[S].T)/len(S) - sum(df_4[B].T)/len(B)
-    SMB2 = sum(df_4[T3].T)/len(S) - (sum(df_4[T1].T)/len(B))
-    SMB= 0.5 * (SMB1 + SMB2)
-
+    SMB = sum(df_4[S].T)/len(S) - sum(df_4[B].T)/len(B)
+   
     dp=get_price('000300.XSHG',begin,end,'1d')['close']
     MKT=diff(np.log(dp))-rf/252
       
