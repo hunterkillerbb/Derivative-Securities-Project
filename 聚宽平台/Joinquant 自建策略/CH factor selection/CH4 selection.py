@@ -27,7 +27,7 @@ def set_params():
     g.tc=10  # 调仓频率
     g.yb=63  # 样本长度
     g.N=15   # 持仓数目
-    g.NoF=4  # 三因子模型还是五因子模型
+    g.NoF=4  # 四因子模型
     
 #2
 #设置中间变量
@@ -332,12 +332,3 @@ def after_trading_end(context):
 # 进行长运算（本模型中不需要）
 
 
- #PMO= 0.5*(sum(df_4[T3].T)/len(V) + sum(df_4[T1])/len(V)) - 0.5*(sum(df_4[S].T)/len(G)+sum(df_4[].T)/len(G))
-    
-   #VMG = 0.5* (sum(df_4[S].T)/len(V)+sum(df_4[B].T)/len(V))- 0.5*(sum(df_4[S].T)/len(G)+sum(df_4[B].T)/len(G))
-
-   # SMB1 = 1/3 * (sum(df_4[S].T)/len(V)) + 1/3 * (sum(df_4[S].T)/len(M)) + 1/3 * (sum(df_4[S].T)/len(G))
-   # SMB2 = 1/3 * (sum(df_4[B].T)/len(V)) + 1/3 * (sum(df_4[B].T)/len(M)) + 1/3 * (sum(df_4[B].T)/len(G))
-   # SMB= SMB1 - SMB2 
-                 
-   # MKT= 1/3*(sum(df_4[V].T)/len(V) +sum(df_4[M].T)/ len(M) +sum(df_4[G].T)/len(G)) - g.rf/252  
